@@ -1,0 +1,495 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Hill Rider - Offline Racing</title>
+<style>
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;user-select:none;-webkit-user-select:none}
+  html,body{margin:0;height:100%;overflow:hidden;background:#1b2a3a;font-family:Verdana,Arial,sans-serif;color:#fff;touch-action:none}
+  canvas{display:block;width:100vw;height:100vh}
+  #hud{position:fixed;left:0;right:0;top:0;padding:10px 14px;display:flex;gap:14px;align-items:flex-start;pointer-events:none}
+  .pill{background:rgba(0,0,0,.45);border-radius:12px;padding:6px 12px;font-weight:bold;font-size:15px;white-space:nowrap}
+  #fuelbox{flex:1;max-width:260px}
+  #fuelbar{height:12px;border-radius:6px;background:rgba(255,255,255,.25);overflow:hidden;margin-top:4px}
+  #fuelfill{height:100%;width:100%;background:#4cd964;transition:background .2s}
+  #btns{position:fixed;left:0;right:0;bottom:0;padding:14px;display:flex;justify-content:space-between;pointer-events:none}
+  .pedal{pointer-events:auto;width:120px;height:90px;border-radius:18px;background:rgba(0,0,0,.4);border:3px solid rgba(255,255,255,.7);display:flex;align-items:center;justify-content:center;font-weight:bold;font-size:18px}
+  .pedal.on{background:rgba(255,255,255,.35)}
+  #iconbtns{position:fixed;right:10px;top:10px;display:flex;gap:8px}
+  .ib{background:rgba(0,0,0,.45);border:0;color:#fff;border-radius:10px;font-size:18px;width:40px;height:40px;cursor:pointer}
+  .overlay{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(10,20,35,.72);padding:16px;overflow:auto}
+  .overlay.show{display:flex}
+  .card{background:#243b55;border-radius:20px;padding:22px 26px;max-width:460px;width:100%;text-align:center;box-shadow:0 10px 40px rgba(0,0,0,.5)}
+  h1{margin:0 0 4px;font-size:34px;letter-spacing:1px}
+  h2{margin:0 0 8px}
+  .sub{opacity:.8;font-size:14px;margin-bottom:16px}
+  .btn{display:block;width:100%;margin:8px 0;padding:13px;border:0;border-radius:12px;font-size:18px;font-weight:bold;cursor:pointer;background:#ff9f1c;color:#222}
+  .btn.alt{background:#3d5a80;color:#fff}
+  .btn:disabled{opacity:.45;cursor:default}
+  .up{display:flex;align-items:center;justify-content:space-between;background:rgba(0,0,0,.25);border-radius:12px;padding:10px 12px;margin:8px 0;text-align:left;gap:10px}
+  .up b{display:block}.up small{opacity:.75}
+  .up button{border:0;border-radius:10px;padding:9px 12px;font-weight:bold;background:#ffd23f;cursor:pointer;min-width:84px}
+  .up button:disabled{opacity:.45;cursor:default}
+  .stat{font-size:18px;margin:6px 0}
+  .help{font-size:13px;opacity:.8;margin-top:8px}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<div id="hud">
+  <div class="pill" id="dist">0 m</div>
+  <div class="pill" id="fuelbox">FUEL<div id="fuelbar"><div id="fuelfill"></div></div></div>
+  <div class="pill" id="coins">🪙 0</div>
+</div>
+<div id="iconbtns"><button class="ib" id="pauseBtn" title="Pause">⏸</button><button class="ib" id="muteBtn" title="Sound">🔊</button></div>
+<div id="btns"><div class="pedal" id="brake">BRAKE ◀</div><div class="pedal" id="gas">GAS ▶</div></div>
+
+<div class="overlay show" id="menu"><div class="card">
+  <h1>HILL RIDER</h1><div class="sub">Offline hill-climb racing. No internet needed.</div>
+  <div class="stat">Best: <b id="mBest">0</b> m &nbsp; Coins: <b id="mCoins">0</b></div>
+  <button class="btn" id="playBtn">▶ PLAY</button>
+  <button class="btn alt" id="garageBtn">🔧 GARAGE (upgrades)</button>
+  <div class="help">Keys: → / D = gas &nbsp; ← / A = brake &amp; reverse<br>In the air: gas tilts nose up, brake tilts nose down.<br>Collect 🪙 coins and ⛽ fuel cans. Don't land on your head!</div>
+</div></div>
+
+<div class="overlay" id="garage"><div class="card">
+  <h2>🔧 Garage</h2><div class="sub">Coins: <b id="gCoins">0</b></div>
+  <div id="upList"></div>
+  <button class="btn alt" id="gBack">Back</button>
+</div></div>
+
+<div class="overlay" id="over"><div class="card">
+  <h2 id="oTitle">Game over</h2><div class="sub" id="oWhy"></div>
+  <div class="stat">Distance: <b id="oDist">0</b> m</div>
+  <div class="stat">Coins collected: <b id="oCoins">0</b></div>
+  <div class="stat" id="oBest"></div>
+  <button class="btn" id="againBtn">↻ Try again</button>
+  <button class="btn alt" id="oGarage">🔧 Garage</button>
+  <button class="btn alt" id="oMenu">Menu</button>
+</div></div>
+
+<div class="overlay" id="pause"><div class="card"><h2>Paused</h2>
+  <button class="btn" id="resumeBtn">Resume</button><button class="btn alt" id="quitBtn">Quit to menu</button></div></div>
+
+<script>
+"use strict";
+/* ============ Saved data (works offline, in the browser) ============ */
+const SAVE_KEY = 'hillrider_save_v1';
+let save = {coins:0, best:0, engine:0, fuel:0, grip:0, susp:0};
+try { Object.assign(save, JSON.parse(localStorage.getItem(SAVE_KEY) || '{}')); } catch(e){}
+function persist(){ try{ localStorage.setItem(SAVE_KEY, JSON.stringify(save)); }catch(e){} }
+
+/* ============ Upgrades ============ */
+const UPG = [
+  {key:'engine', name:'Engine',     desc:'More power and top speed', max:5, cost:l=>60+l*90},
+  {key:'fuel',   name:'Fuel tank',  desc:'Bigger tank, longer trips', max:5, cost:l=>50+l*80},
+  {key:'grip',   name:'Tyres',      desc:'More grip on steep hills',  max:5, cost:l=>50+l*70},
+  {key:'susp',   name:'Suspension', desc:'Softer landings',           max:5, cost:l=>70+l*80},
+];
+
+/* ============ Canvas / helpers ============ */
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+let W=0,H=0,DPR=1,SC=1;
+function resize(){
+  DPR = Math.min(window.devicePixelRatio||1, 2);
+  W = innerWidth; H = innerHeight;
+  cv.width = W*DPR; cv.height = H*DPR;
+  SC = (H*DPR)/620;   // world units visible vertically = 620
+}
+addEventListener('resize', resize); resize();
+const $ = id => document.getElementById(id);
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+
+/* ============ Terrain ============ */
+function amp(x){ return clamp((x-500)/9, 0, 1)*clamp(18 + x/110, 18, 62); }
+function terrain(x){
+  const a = amp(x);
+  let h = Math.sin(x/190)*1.0 + Math.sin(x/79+1.3)*0.38 + Math.sin(x/360+2.0)*1.35 + Math.sin(x/37+0.4)*0.08;
+  // a few jump ramps
+  const k = Math.floor(x/1700), lx = x - k*1700;
+  let ramp = 0;
+  if(x>2500 && lx>900 && lx<1000){ ramp = -(lx-900)*0.55; }
+  else if(x>2500 && lx>=1000 && lx<1120){ ramp = -55 + (lx-1000)*0.46; }
+  return 420 + a*h + ramp;
+}
+function slopeAt(x){ return (terrain(x+1.5)-terrain(x-1.5))/3; }
+
+/* ============ Car ============ */
+const R = 20, SUSP_L = 24, TRAVEL = 20;
+const GRAV = 900, INERTIA = 1500;
+const car = {x:0,y:0,vx:0,vy:0,a:0,w:0, wheels:[{rot:0,comp:0,on:false},{rot:0,comp:0,on:false}]};
+const WHEEL_X = [-44, 44], MOUNT_Y = 14;
+
+let state = 'menu';
+let input = {gas:false, brake:false};
+let fuel=100, fuelMax=100, runCoins=0, startX=0, distM=0, crashTimer=0, stuckTimer=0, camX=0, camY=0, time=0, shake=0;
+let coinsArr=[], cans=[], nextCoinX=900, nextCanX=1100, particles=[];
+
+function carStats(){
+  return {
+    power: 560 + save.engine*80,
+    vmax: 950 + save.engine*110,
+    mu: 1.15 + save.grip*0.2,
+    k: 70 - save.susp*4,
+    c: 10 + save.susp*0.6,
+  };
+}
+
+function resetRun(){
+  fuelMax = 100 + save.fuel*25; fuel = fuelMax;
+  car.x = 150; car.y = terrain(150) - 52; car.vx=0; car.vy=0; car.a=0; car.w=0;
+  startX = car.x; runCoins=0; distM=0; crashTimer=0; stuckTimer=0; time=0; shake=0;
+  coinsArr=[]; cans=[]; nextCoinX=600; nextCanX=1000; particles=[];
+  camX = car.x; camY = car.y;
+  genAhead();
+}
+function genAhead(){
+  const lim = car.x + 2600;
+  while(nextCoinX < lim){
+    const n = 3 + Math.floor(Math.random()*5), hh = 55 + Math.random()*40;
+    for(let i=0;i<n;i++){ const x = nextCoinX + i*46; coinsArr.push({x, y:terrain(x)-hh-Math.sin(i/(n-1||1)*Math.PI)*18, got:false}); }
+    nextCoinX += n*46 + 250 + Math.random()*500;
+  }
+  while(nextCanX < lim){
+    cans.push({x:nextCanX, y:terrain(nextCanX)-48, got:false});
+    nextCanX += 1250 + Math.random()*500;
+  }
+}
+
+/* ============ Physics ============ */
+function step(dt){
+  const S = carStats();
+  const gas = input.gas?1:0, brk = input.brake?1:0;
+  const hasFuel = fuel > 0;
+  const c = Math.cos(car.a), s = Math.sin(car.a);
+  const rx_ = [c, s], dn = [-s, c];
+  let ax = 0, ay = GRAV, al = 0, contacts = 0;
+
+  function applyForce(px,py,fx,fy){ // point relative to centre
+    ax += fx; ay += fy; al += (px*fy - py*fx)/INERTIA;
+  }
+  function velAt(px,py){ return [car.vx - car.w*py, car.vy + car.w*px]; }
+
+  for(let i=0;i<2;i++){
+    const lx = WHEEL_X[i];
+    const px = rx_[0]*lx + dn[0]*MOUNT_Y, py = rx_[1]*lx + dn[1]*MOUNT_Y; // mount relative
+    const mx = car.x+px, my = car.y+py;
+    const wcx = mx + dn[0]*SUSP_L, wcy = my + dn[1]*SUSP_L;
+    const m = slopeAt(wcx), len = Math.sqrt(1+m*m);
+    const gy = terrain(wcx);
+    const d = (gy - wcy)/len;
+    let pen = R - d;
+    const wh = car.wheels[i];
+    wh.on = false;
+    if(pen > 0){
+      contacts++; wh.on = true;
+      const nx = m/len, ny = -1/len, tx = 1/len, ty = m/len;
+      const v = velAt(px,py);
+      const vn = v[0]*nx+v[1]*ny, vt = v[0]*tx+v[1]*ty;
+      let Fn = S.k*Math.min(pen,TRAVEL) - S.c*vn;
+      if(pen > TRAVEL) Fn += 900*(pen-TRAVEL);
+      if(Fn < 0) Fn = 0;
+      // drive / brake along the slope
+      let Ft = 0;
+      const maxF = S.mu*Fn;
+      let want = 0;
+      if(hasFuel && (gas||brk)){
+        if(gas && !brk) want = S.power*0.5*clamp(1 - Math.max(vt,0)/S.vmax, 0, 1);
+        else if(brk && !gas){
+          if(vt > 40) want = -S.power*0.55;
+          else want = -S.power*0.5*clamp(1 - Math.max(-vt,0)/420, 0, 1);
+        }
+      } else if(brk && vt > 40){ want = -S.power*0.55; }
+      Ft = clamp(want, -maxF, maxF);
+      // rolling resistance
+      Ft -= clamp(vt*0.4, -30, 30);
+      wh.comp = Math.min(pen, TRAVEL);
+      wh.rot += vt*dt/R;
+      applyForce(px,py, Fn*nx+Ft*tx, Fn*ny+Ft*ty);
+    } else { wh.comp = 0; wh.rot += (gas&&hasFuel?14:0)*dt*(brk?-1:1); }
+  }
+
+  // body corners: collide with ground; head & roof => crash
+  const pts = [[-56,12,0],[56,12,0],[-56,-16,1],[56,-16,1],[-14,-40,2],[8,-40,2]];
+  let headHit=false;
+  for(const p of pts){
+    const px = rx_[0]*p[0] + dn[0]*p[1], py = rx_[1]*p[0] + dn[1]*p[1];
+    const wx = car.x+px, wy = car.y+py, gy = terrain(wx);
+    const dep = wy - gy;
+    if(dep > 0){
+      const m = slopeAt(wx), len = Math.sqrt(1+m*m), nx = m/len, ny = -1/len;
+      const v = velAt(px,py), vn = v[0]*nx+v[1]*ny;
+      let Fn = 700*Math.min(dep,30) - 14*vn; if(Fn<0) Fn=0;
+      const vt = v[0]/len*1 + v[1]*m/len;
+      applyForce(px,py, Fn*nx - clamp(vt*3,-300,300)/len, Fn*ny - clamp(vt*3,-300,300)*m/len);
+      if(p[2]>=1) headHit = true;
+      if(p[2]==2 && vn < -150) shake = Math.max(shake, 6);
+    }
+  }
+
+  // air control & damping
+  if(contacts===0){
+    if(hasFuel) al += (brk-gas)*-1*11;   // gas: nose up (negative angle)
+    car.w *= (1 - 0.35*dt);
+  } else { car.w *= (1 - 0.6*dt); }
+  // gentle self-stabilising torque so the car is controllable on the ground
+  if(contacts===2) al += -car.a*1.2;
+
+  car.vx += ax*dt; car.vy += ay*dt; car.w += al*dt;
+  car.x += car.vx*dt; car.y += car.vy*dt; car.a += car.w*dt;
+  if(car.a > Math.PI) car.a -= 2*Math.PI; if(car.a < -Math.PI) car.a += 2*Math.PI;
+  car.contacts = contacts;
+  return headHit;
+}
+
+/* ============ Audio (generated, no files) ============ */
+let actx=null, osc=null, gainN=null, muted=false;
+function audioStart(){
+  if(actx) { if(actx.state==='suspended') actx.resume(); return; }
+  try{
+    actx = new (window.AudioContext||window.webkitAudioContext)();
+    osc = actx.createOscillator(); osc.type='sawtooth'; osc.frequency.value=50;
+    const lp = actx.createBiquadFilter(); lp.type='lowpass'; lp.frequency.value=420;
+    gainN = actx.createGain(); gainN.gain.value=0;
+    osc.connect(lp); lp.connect(gainN); gainN.connect(actx.destination); osc.start();
+  }catch(e){ actx=null; }
+}
+function beep(f,d,type){
+  if(!actx||muted) return;
+  const o=actx.createOscillator(), g=actx.createGain(); o.type=type||'sine'; o.frequency.value=f;
+  g.gain.value=0.08; o.connect(g); g.connect(actx.destination);
+  g.gain.exponentialRampToValueAtTime(0.001, actx.currentTime+d); o.start(); o.stop(actx.currentTime+d);
+}
+function engineSound(){
+  if(!actx||!gainN) return;
+  const on = state==='playing' && !muted && fuel>0;
+  const sp = Math.abs(car.vx);
+  gainN.gain.setTargetAtTime(on ? (input.gas?0.07:0.025) : 0, actx.currentTime, 0.05);
+  osc.frequency.setTargetAtTime(45 + sp*0.09 + (input.gas?25:0), actx.currentTime, 0.08);
+}
+
+/* ============ Game flow ============ */
+function show(id){ document.querySelectorAll('.overlay').forEach(o=>o.classList.remove('show')); if(id) $(id).classList.add('show'); }
+function updateMenu(){ $('mBest').textContent = Math.floor(save.best); $('mCoins').textContent = save.coins; }
+function startGame(){ audioStart(); resetRun(); state='playing'; show(null); setPedals(true); }
+function endGame(why, title){
+  if(state!=='playing') return;
+  state='over'; setPedals(false);
+  beep(120,0.4,'sawtooth');
+  const d = Math.floor(distM);
+  const newBest = d > save.best;
+  if(newBest) save.best = d;
+  save.coins += runCoins; persist();
+  $('oTitle').textContent = title; $('oWhy').textContent = why;
+  $('oDist').textContent = d; $('oCoins').textContent = runCoins;
+  $('oBest').innerHTML = newBest ? '🏆 <b>New best!</b>' : 'Best: <b>'+Math.floor(save.best)+'</b> m';
+  setTimeout(()=>{ if(state==='over') show('over'); }, 700);
+}
+function setPedals(v){ $('btns').style.display = v ? 'flex':'none'; $('hud').style.display = v?'flex':'none'; $('iconbtns').style.display = v?'flex':'none'; }
+function buildGarage(){
+  $('gCoins').textContent = save.coins;
+  const box = $('upList'); box.innerHTML='';
+  for(const u of UPG){
+    const lvl = save[u.key], maxed = lvl>=u.max, cost = u.cost(lvl);
+    const row = document.createElement('div'); row.className='up';
+    row.innerHTML = '<div><b>'+u.name+' &nbsp;'+'■'.repeat(lvl)+'□'.repeat(u.max-lvl)+'</b><small>'+u.desc+'</small></div>';
+    const b = document.createElement('button');
+    b.textContent = maxed ? 'MAX' : '🪙 '+cost; b.disabled = maxed || save.coins<cost;
+    b.onclick = ()=>{ save.coins-=cost; save[u.key]++; persist(); beep(660,0.15); buildGarage(); updateMenu(); };
+    row.appendChild(b); box.appendChild(row);
+  }
+}
+let garageFrom = 'menu';
+function openGarage(from){ garageFrom=from; buildGarage(); show('garage'); }
+
+$('playBtn').onclick = startGame;
+$('againBtn').onclick = startGame;
+$('garageBtn').onclick = ()=>openGarage('menu');
+$('oGarage').onclick = ()=>openGarage('over');
+$('gBack').onclick = ()=>{ updateMenu(); show(garageFrom); };
+$('oMenu').onclick = ()=>{ state='menu'; updateMenu(); show('menu'); };
+$('pauseBtn').onclick = pauseGame;
+$('resumeBtn').onclick = resumeGame;
+$('quitBtn').onclick = ()=>{ state='menu'; setPedals(false); updateMenu(); show('menu'); };
+$('muteBtn').onclick = ()=>{ muted=!muted; $('muteBtn').textContent = muted?'🔇':'🔊'; };
+function pauseGame(){ if(state==='playing'){ state='paused'; show('pause'); } }
+function resumeGame(){ if(state==='paused'){ state='playing'; show(null); last=performance.now(); } }
+
+/* ============ Input ============ */
+function setKey(e,v){
+  const k = e.key;
+  if(k==='ArrowRight'||k==='d'||k==='D'||k==='ArrowUp'||k==='w'||k==='W'){ input.gas=v; e.preventDefault(); }
+  else if(k==='ArrowLeft'||k==='a'||k==='A'||k==='ArrowDown'||k==='s'||k==='S'){ input.brake=v; e.preventDefault(); }
+  else if(v && (k==='p'||k==='P'||k==='Escape')){ state==='paused'?resumeGame():pauseGame(); }
+  else if(v && k==='Enter' && (state==='menu'||state==='over')){ startGame(); }
+}
+addEventListener('keydown', e=>{ audioStart(); setKey(e,true); });
+addEventListener('keyup', e=>setKey(e,false));
+function bindPedal(id, key){
+  const el = $(id);
+  const on = e=>{ e.preventDefault(); audioStart(); input[key]=true; el.classList.add('on'); };
+  const off= e=>{ e.preventDefault(); input[key]=false; el.classList.remove('on'); };
+  el.addEventListener('pointerdown', on); el.addEventListener('pointerup', off);
+  el.addEventListener('pointercancel', off); el.addEventListener('pointerleave', off);
+  el.addEventListener('contextmenu', e=>e.preventDefault());
+}
+bindPedal('gas','gas'); bindPedal('brake','brake');
+addEventListener('blur', ()=>{ input.gas=input.brake=false; pauseGame(); });
+
+/* ============ Drawing ============ */
+function drawBackground(){
+  const g = ctx.createLinearGradient(0,0,0,cv.height);
+  g.addColorStop(0,'#6ec6ff'); g.addColorStop(0.65,'#cdeeff'); g.addColorStop(1,'#f3fbff');
+  ctx.fillStyle=g; ctx.fillRect(0,0,cv.width,cv.height);
+  // sun
+  ctx.fillStyle='rgba(255,244,180,.9)'; ctx.beginPath(); ctx.arc(cv.width*0.82, cv.height*0.17, 46*SC, 0, 7); ctx.fill();
+  // parallax hills
+  const layers=[{f:0.15,col:'#9fc9d8',base:0.62,a:70,l:600},{f:0.3,col:'#7fb7a0',base:0.72,a:60,l:380}];
+  for(const L of layers){
+    ctx.fillStyle=L.col; ctx.beginPath(); ctx.moveTo(0,cv.height);
+    for(let px=0; px<=cv.width; px+=12){
+      const wx = camX*L.f + px/SC;
+      const y = cv.height*L.base + (Math.sin(wx/L.l)*L.a + Math.sin(wx/(L.l*0.43)+2)*L.a*0.4)*SC;
+      ctx.lineTo(px,y);
+    }
+    ctx.lineTo(cv.width,cv.height); ctx.fill();
+  }
+}
+function drawTerrain(){
+  const x0 = camX - cv.width/(2*SC) - 20, x1 = camX + cv.width/(2*SC) + 20, stepx = 8;
+  ctx.beginPath();
+  ctx.moveTo(x0, camY + 900);
+  for(let x=x0; x<=x1; x+=stepx) ctx.lineTo(x, terrain(x));
+  ctx.lineTo(x1, camY+900); ctx.closePath();
+  const g = ctx.createLinearGradient(0, camY-100, 0, camY+500);
+  g.addColorStop(0,'#8a5a2b'); g.addColorStop(1,'#4a2e14');
+  ctx.fillStyle=g; ctx.fill();
+  // grass strip
+  ctx.beginPath();
+  for(let x=x0; x<=x1; x+=stepx) ctx.lineTo(x, terrain(x));
+  for(let x=x1; x>=x0; x-=stepx) ctx.lineTo(x, terrain(x)+14);
+  ctx.closePath(); ctx.fillStyle='#4caf50'; ctx.fill();
+  ctx.beginPath();
+  for(let x=x0; x<=x1; x+=stepx) ctx.lineTo(x, terrain(x));
+  ctx.lineWidth=4; ctx.strokeStyle='#2e8b3a'; ctx.stroke();
+}
+function drawWheel(x,y,rot){
+  ctx.save(); ctx.translate(x,y); ctx.rotate(rot);
+  ctx.fillStyle='#1d1d1d'; ctx.beginPath(); ctx.arc(0,0,R,0,7); ctx.fill();
+  ctx.fillStyle='#c9c9c9'; ctx.beginPath(); ctx.arc(0,0,R*0.55,0,7); ctx.fill();
+  ctx.strokeStyle='#777'; ctx.lineWidth=3;
+  for(let i=0;i<4;i++){ ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(Math.cos(i*Math.PI/2)*R*0.55, Math.sin(i*Math.PI/2)*R*0.55); ctx.stroke(); }
+  ctx.fillStyle='#1d1d1d'; for(let i=0;i<10;i++){ const an=i*Math.PI/5; ctx.fillRect(Math.cos(an)*R-2,Math.sin(an)*R-2,4,4); }
+  ctx.restore();
+}
+function drawCar(){
+  const c=Math.cos(car.a), s=Math.sin(car.a);
+  for(let i=0;i<2;i++){
+    const lx=WHEEL_X[i];
+    const mx = car.x + c*lx - s*MOUNT_Y, my = car.y + s*lx + c*MOUNT_Y;
+    const ext = SUSP_L - car.wheels[i].comp*0.0 ;
+    const wx = mx - s*ext, wy = my + c*ext;
+    // render wheel on the ground when in contact
+    drawWheel(wx, wy - (car.wheels[i].on? 0:0), car.wheels[i].rot);
+  }
+  ctx.save(); ctx.translate(car.x, car.y); ctx.rotate(car.a);
+  // body
+  ctx.fillStyle='#e53935'; ctx.strokeStyle='#7f1d1d'; ctx.lineWidth=3;
+  ctx.beginPath(); ctx.moveTo(-58,14); ctx.lineTo(-58,-10); ctx.quadraticCurveTo(-56,-18,-40,-18);
+  ctx.lineTo(-18,-18); ctx.lineTo(-8,-34); ctx.lineTo(22,-34); ctx.lineTo(34,-16); ctx.lineTo(54,-12);
+  ctx.quadraticCurveTo(60,-8,58,14); ctx.closePath(); ctx.fill(); ctx.stroke();
+  // window
+  ctx.fillStyle='#bfe9ff'; ctx.beginPath(); ctx.moveTo(-14,-18); ctx.lineTo(-6,-30); ctx.lineTo(18,-30); ctx.lineTo(26,-18); ctx.closePath(); ctx.fill();
+  // driver
+  ctx.fillStyle='#ffd7a8'; ctx.beginPath(); ctx.arc(4,-28,9,0,7); ctx.fill();
+  ctx.fillStyle='#1976d2'; ctx.beginPath(); ctx.arc(4,-31,9,Math.PI,0); ctx.fill();
+  // bumper + light
+  ctx.fillStyle='#fff7a8'; ctx.fillRect(50,-8,7,7);
+  ctx.fillStyle='#333'; ctx.fillRect(-60,6,120,6);
+  ctx.restore();
+}
+function drawCoin(x,y){
+  const w = Math.abs(Math.cos(time*4 + x*0.01));
+  ctx.fillStyle='#ffd23f'; ctx.strokeStyle='#b8860b'; ctx.lineWidth=2;
+  ctx.beginPath(); ctx.ellipse(x,y,9*Math.max(w,0.2),11,0,0,7); ctx.fill(); ctx.stroke();
+}
+function drawCan(x,y){
+  ctx.fillStyle='#d32f2f'; ctx.fillRect(x-14,y-18,28,34);
+  ctx.fillStyle='#fff'; ctx.fillRect(x-14,y-6,28,10);
+  ctx.fillStyle='#333'; ctx.fillRect(x-6,y-24,12,7);
+  ctx.fillStyle='#d32f2f'; ctx.font='bold 10px Arial'; ctx.textAlign='center'; ctx.fillText('FUEL',x,y+3);
+}
+function render(){
+  drawBackground();
+  ctx.save();
+  const sx = shake>0 ? (Math.random()-.5)*shake : 0, sy = shake>0 ? (Math.random()-.5)*shake : 0;
+  ctx.translate(cv.width/2 + sx*SC, cv.height*0.58 + sy*SC);
+  ctx.scale(SC,SC); ctx.translate(-camX, -camY);
+  drawTerrain();
+  for(const c of coinsArr) if(!c.got && Math.abs(c.x-camX) < cv.width/SC) drawCoin(c.x,c.y);
+  for(const c of cans) if(!c.got && Math.abs(c.x-camX) < cv.width/SC) drawCan(c.x,c.y);
+  for(const p of particles){ ctx.fillStyle='rgba(120,90,50,'+(p.l*1.4)+')'; ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,7); ctx.fill(); }
+  // distance marker posts
+  const m0 = startX + Math.floor((camX - cv.width/SC/2 - startX)/500)*500;
+  for(let x=m0; x<camX+cv.width/SC/2; x+=500){
+    if(x<startX) continue;
+    const y = terrain(x); ctx.fillStyle='#fff'; ctx.fillRect(x-2,y-46,4,46);
+    ctx.fillStyle='#e53935'; ctx.fillRect(x-22,y-58,44,18);
+    ctx.fillStyle='#fff'; ctx.font='bold 12px Arial'; ctx.textAlign='center'; ctx.fillText(Math.round((x-startX)/50)+'m', x, y-45);
+  }
+  drawCar();
+  ctx.restore();
+}
+
+/* ============ Main loop ============ */
+let last = performance.now(), acc = 0;
+function frame(now){
+  requestAnimationFrame(frame);
+  let dt = Math.min((now-last)/1000, 0.05); last = now;
+  if(state==='playing'){
+    time += dt; acc += dt;
+    const H_ = 1/240;
+    while(acc >= H_){
+      const hit = step(H_); acc -= H_;
+      if(hit){ crashTimer += H_; } else if(crashTimer>0){ crashTimer = Math.max(0, crashTimer - H_*2); }
+    }
+    // fuel
+    if(fuel>0){ fuel -= dt*(input.gas?5.5:1.1); if(fuel<0) fuel=0; }
+    // pickups
+    for(const c of coinsArr) if(!c.got && Math.abs(c.x-car.x)<40 && Math.abs(c.y-car.y)<48){ c.got=true; runCoins++; beep(900,0.1,'square'); }
+    for(const c of cans) if(!c.got && Math.abs(c.x-car.x)<50 && Math.abs(c.y-car.y)<60){ c.got=true; fuel=fuelMax; beep(500,0.25,'triangle'); }
+    // dust
+    if(car.contacts>0 && input.gas && Math.random()<0.6) particles.push({x:car.x-50*Math.cos(car.a),y:car.y+30,vx:-60-Math.random()*60,vy:-30-Math.random()*40,r:2+Math.random()*3,l:0.6});
+    for(const p of particles){ p.x+=p.vx*dt; p.y+=p.vy*dt; p.l-=dt; }
+    particles = particles.filter(p=>p.l>0);
+    shake = Math.max(0, shake - dt*20);
+    distM = Math.max(distM, (car.x-startX)/50);
+    genAhead();
+    if(coinsArr.length>400) coinsArr = coinsArr.filter(c=>c.x>car.x-1500);
+    // end conditions
+    if(crashTimer > 0.12) endGame('You hit your head!', 'Crashed 💥');
+    else if(fuel<=0){ if(Math.abs(car.vx)<12 && car.contacts>0){ stuckTimer+=dt; if(stuckTimer>1.5) endGame('You ran out of fuel.', 'Out of fuel ⛽'); } }
+    else if(car.y > terrain(car.x)+400) endGame('The car fell off the track.', 'Crashed 💥');
+    // HUD
+    $('dist').textContent = Math.floor(distM)+' m';
+    $('coins').textContent = '🪙 '+(save.coins+runCoins);
+    const f = fuel/fuelMax; const ff=$('fuelfill'); ff.style.width=(f*100)+'%';
+    ff.style.background = f>0.5?'#4cd964':(f>0.2?'#ffcc00':'#ff3b30');
+  }
+  if(state!=='menu'){
+    camX += (car.x + clamp(car.vx*0.25,-60,260) - camX)*Math.min(1, dt*5);
+    camY += (car.y - camY)*Math.min(1, dt*4);
+  } else { camX += dt*60; camY = terrain(camX)-60; }
+  engineSound();
+  render();
+}
+state='menu'; setPedals(false); updateMenu(); resetRun(); state='menu';
+requestAnimationFrame(frame);
+
+// test hook
+window.__g = {car, step, get state(){return state}, input, resetRun, startGame, terrain, get dist(){return distM}, get fuel(){return fuel}};
+</script>
+</body>
+</html>
